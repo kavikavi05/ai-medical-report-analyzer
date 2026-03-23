@@ -1,0 +1,5 @@
+{
+  "name": "MedAI",
+  "description": "AI-powered medical report analysis. Upload your reports to get instant explanations and summaries of your test results.",
+  "requestFramePermissions": []
+}

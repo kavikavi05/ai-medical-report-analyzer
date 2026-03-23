@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique identifier for the user" },
+        "email": { "type": "string", "format": "email", "description": "The user's email address" },
+        "displayName": { "type": "string", "description": "The user's display name" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Analysis": {
+      "title": "Analysis",
+      "description": "A saved medical report analysis",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The ID of the user who owns this analysis" },
+        "fileName": { "type": "string", "description": "The name of the uploaded PDF file" },
+        "summary": { "type": "string", "description": "The AI-generated summary" },
+        "tests": { "type": "array", "description": "The extracted test results" },
+        "recommendations": { "type": "array", "description": "AI-generated health suggestions" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the analysis was performed" }
+      },
+      "required": ["uid", "fileName", "summary", "tests", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/analyses/{analysisId}": {
+      "schema": "Analysis",
+      "description": "Analysis history"
+    }
+  }
+}
