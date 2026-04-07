@@ -22,6 +22,12 @@
         "summary": { "type": "string", "description": "The AI-generated summary" },
         "tests": { "type": "array", "description": "The extracted test results" },
         "recommendations": { "type": "array", "description": "AI-generated health suggestions" },
+        "predictions": { "type": "array", "description": "AI-based disease predictions" },
+        "healthSuggestions": { "type": "object", "description": "Personalized health suggestions" },
+        "isCritical": { "type": "boolean", "description": "Whether critical values were detected" },
+        "criticalAlertMessage": { "type": "string", "description": "Message for critical alerts" },
+        "age": { "type": "string", "description": "Patient age" },
+        "gender": { "type": "string", "description": "Patient gender" },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the analysis was performed" }
       },
       "required": ["uid", "fileName", "summary", "tests", "createdAt"]

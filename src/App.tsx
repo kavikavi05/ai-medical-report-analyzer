@@ -27,9 +27,27 @@ import {
   Lock,
   ArrowRight,
   Eye,
-  EyeOff
+  EyeOff,
+  Activity,
+  Heart,
+  Apple,
+  Dumbbell,
+  Brain,
+  AlertTriangle,
+  TrendingUp,
+  Baby
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 import { cn } from './lib/utils';
 import { AnalysisResult, MedicalTest, SavedAnalysis } from './types';
 import { auth, db } from './firebase';
@@ -165,7 +183,10 @@ function AppContent() {
   const [result, setResult] = React.useState<AnalysisResult | null>(null);
   const [history, setHistory] = React.useState<SavedAnalysis[]>([]);
   const [error, setError] = React.useState<string | null>(null);
-  const [view, setView] = React.useState<'analyze' | 'history'>('analyze');
+  const [view, setView] = React.useState<'analyze' | 'history' | 'trends'>('analyze');
+  const [eli5Mode, setEli5Mode] = React.useState(false);
+  const [age, setAge] = React.useState<string>("");
+  const [gender, setGender] = React.useState<string>("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Login/Signup state
@@ -350,15 +371,15 @@ function AppContent() {
       "Scanning document structure...",
       "Extracting medical test results...",
       "AI cross-referencing standards...",
-      "Generating plain-language summary...",
+      "Predicting possible health risks...",
+      "Generating personalized lifestyle advice...",
       "Finalizing your report..."
     ];
 
     try {
-      // Start progress simulation
       const progressInterval = setInterval(() => {
         setAnalysisStep(prev => (prev < steps.length - 1 ? prev + 1 : prev));
-      }, 2500);
+      }, 2000);
 
       const base64Data = await fileToBase64(file);
 
@@ -374,7 +395,13 @@ function AppContent() {
                 },
               },
               {
-                text: "Analyze this medical report. Extract all test results, their values, normal ranges, and status. Provide a plain-language explanation for each test and a concise overall summary. Return the data in a structured JSON format.",
+                text: `Analyze this medical report for a ${age || 'unknown age'} year old ${gender || 'unknown gender'}. 
+                1. Extract all test results (name, value, unit, numeric value, normal range, status).
+                2. Provide a plain-language explanation AND a very simple "Explain Like I'm 5" (ELI5) explanation for each test.
+                3. Predict possible diseases or health risks based on these values (e.g., Early detection of diabetes, anemia).
+                4. Provide personalized health suggestions (diet, exercise, lifestyle) based on the report and the patient's age/gender.
+                5. Check for critical values (e.g., very high BP, low oxygen) and flag them with an alert message.
+                Return the data in a structured JSON format.`,
               },
             ],
           },
@@ -389,29 +416,45 @@ function AppContent() {
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    name: { type: Type.STRING, description: "Name of the medical test (e.g., Hemoglobin, Glucose)" },
-                    value: { type: Type.STRING, description: "The measured value with units" },
-                    normal_range: { type: Type.STRING, description: "The reference/normal range provided in the report" },
-                    status: { 
-                      type: Type.STRING, 
-                      enum: ["Normal", "High", "Low", "Abnormal", "Unknown"],
-                      description: "The status of the result relative to the normal range" 
-                    },
-                    explanation: { type: Type.STRING, description: "A brief, easy-to-understand explanation of what this test measures and what the result might mean" }
+                    name: { type: Type.STRING },
+                    value: { type: Type.STRING },
+                    unit: { type: Type.STRING },
+                    numericValue: { type: Type.NUMBER },
+                    normal_range: { type: Type.STRING },
+                    status: { type: Type.STRING, enum: ["Normal", "High", "Low", "Abnormal", "Unknown"] },
+                    explanation: { type: Type.STRING },
+                    eli5_explanation: { type: Type.STRING }
                   },
-                  required: ["name", "value", "normal_range", "status", "explanation"]
+                  required: ["name", "value", "unit", "numericValue", "normal_range", "status", "explanation", "eli5_explanation"]
                 }
               },
-              summary: { type: Type.STRING, description: "A concise summary of the overall report findings" },
-              recommendations: { 
-                type: Type.ARRAY, 
-                items: { type: Type.STRING },
-                description: "General health recommendations or follow-up suggestions (always include a disclaimer to consult a doctor)" 
-              }
+              summary: { type: Type.STRING },
+              predictions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    disease: { type: Type.STRING },
+                    probability: { type: Type.STRING, enum: ["Low", "Moderate", "High"] },
+                    reasoning: { type: Type.STRING }
+                  }
+                }
+              },
+              healthSuggestions: {
+                type: Type.OBJECT,
+                properties: {
+                  diet: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  exercise: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  lifestyle: { type: Type.ARRAY, items: { type: Type.STRING } }
+                }
+              },
+              isCritical: { type: Type.BOOLEAN },
+              criticalAlertMessage: { type: Type.STRING },
+              recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
             },
             required: ["tests", "summary"]
           },
-          systemInstruction: "You are a highly accurate medical report analyzer. Your goal is to help patients understand their lab results by extracting data and providing clear, empathetic, and medically sound explanations. Always maintain a professional yet approachable tone. Do not diagnose; instead, explain what the numbers mean in the context of standard reference ranges. Always emphasize that the user should consult their healthcare provider for a definitive interpretation.",
+          systemInstruction: "You are a world-class medical diagnostic AI. Your goal is to provide deep insights into medical reports, predict potential health risks early, and offer actionable lifestyle advice. Always maintain a professional tone and include a disclaimer that this is not a medical diagnosis.",
         },
       });
 
@@ -421,28 +464,41 @@ function AppContent() {
       const text = response.text;
       if (text) {
         const parsedResult = JSON.parse(text) as AnalysisResult;
-        setResult(parsedResult);
+        
+        // Robust numeric value extraction fallback
+        const processedTests = parsedResult.tests.map(test => {
+          if (test.numericValue === undefined || test.numericValue === null) {
+            const match = test.value.match(/(\d+(\.\d+)?)/);
+            if (match) {
+              test.numericValue = parseFloat(match[0]);
+            }
+          }
+          return test;
+        });
 
-        // Save to Firestore
+        setResult({ ...parsedResult, tests: processedTests });
+
         try {
           await addDoc(collection(db, 'analyses'), {
             uid: user.uid,
             fileName: file.name,
             summary: parsedResult.summary,
-            tests: parsedResult.tests,
+            tests: processedTests,
+            predictions: parsedResult.predictions || [],
+            healthSuggestions: parsedResult.healthSuggestions || null,
+            isCritical: parsedResult.isCritical || false,
+            criticalAlertMessage: parsedResult.criticalAlertMessage || "",
             recommendations: parsedResult.recommendations || [],
+            age: age ? parseInt(age) : null,
+            gender: gender || null,
             createdAt: new Date().toISOString()
           });
         } catch (dbErr) {
           handleFirestoreError(dbErr, OperationType.CREATE, 'analyses');
         }
-
-      } else {
-        throw new Error("No analysis received from the AI.");
       }
     } catch (err: any) {
-      console.error("Analysis error:", err);
-      setError(err.message || "An error occurred during analysis. Please try again.");
+      setError(err.message || "An error occurred during analysis.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -663,6 +719,16 @@ function AppContent() {
             <History className="w-5 h-5" />
             History
           </button>
+          <button 
+            onClick={() => setView('trends')}
+            className={cn(
+              "px-4 py-3 rounded-xl text-sm font-bold transition-all flex items-center gap-3",
+              view === 'trends' ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <TrendingUp className="w-5 h-5" />
+            Trends
+          </button>
         </nav>
 
         <div className="mt-auto pt-6 border-t border-slate-800 space-y-4">
@@ -706,6 +772,32 @@ function AppContent() {
                       Upload your blood tests or medical reports as a PDF or image. Our AI extracts the data and explains what it means for your health.
                     </p>
                   </section>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 ml-1">Age</label>
+                      <input 
+                        type="number" 
+                        placeholder="e.g. 25"
+                        value={age}
+                        onChange={(e) => setAge(e.target.value)}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 ml-1">Gender</label>
+                      <select 
+                        value={gender}
+                        onChange={(e) => setGender(e.target.value)}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      >
+                        <option value="">Select</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                  </div>
 
                 <div className="space-y-4">
                   <div 
@@ -789,20 +881,135 @@ function AppContent() {
               <div className="lg:col-span-7">
                 <AnimatePresence mode="wait">
                   {result ? (
-                    <motion.div
-                      key="results"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      className="space-y-8"
-                    >
+                    <div className="space-y-8">
+                      {/* Critical Alert */}
+                      {result.isCritical && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="bg-rose-600 text-white p-6 rounded-3xl shadow-xl shadow-rose-200 flex items-start gap-4"
+                        >
+                          <AlertTriangle className="w-8 h-8 shrink-0" />
+                          <div>
+                            <h3 className="text-xl font-bold mb-1">Critical Values Detected!</h3>
+                            <p className="text-rose-50 leading-relaxed">
+                              {result.criticalAlertMessage || "Some values in your report are significantly outside the normal range. Please contact your healthcare provider immediately."}
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      <div className="flex items-center justify-between">
+                        <h2 className="text-2xl font-bold text-slate-900">Analysis Result</h2>
+                        <div className="flex items-center gap-3 bg-slate-100 p-1 rounded-xl">
+                          <button 
+                            onClick={() => setEli5Mode(false)}
+                            className={cn(
+                              "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                              !eli5Mode ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            Medical
+                          </button>
+                          <button 
+                            onClick={() => setEli5Mode(true)}
+                            className={cn(
+                              "px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2",
+                              eli5Mode ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            <Baby className="w-3 h-3" />
+                            ELI5
+                          </button>
+                        </div>
+                      </div>
+
                       {/* Summary Card */}
                       <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
-                        <h3 className="text-2xl font-bold mb-4">Analysis Summary</h3>
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                          <Brain className="w-6 h-6 text-blue-600" />
+                          AI Summary
+                        </h3>
                         <p className="text-slate-600 leading-relaxed text-lg">
                           {result.summary}
                         </p>
                       </div>
+
+                      {/* Disease Predictions */}
+                      {result.predictions && result.predictions.length > 0 && (
+                        <div className="space-y-4">
+                          <h3 className="text-xl font-bold px-2 flex items-center gap-2">
+                            <ShieldAlert className="w-6 h-6 text-amber-500" />
+                            Potential Health Risks
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {result.predictions.map((pred, idx) => (
+                              <div key={idx} className="bg-white p-6 rounded-2xl border border-slate-200">
+                                <div className="flex items-center justify-between mb-3">
+                                  <h4 className="font-bold text-slate-900">{pred.disease}</h4>
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                                    pred.probability === 'High' ? "bg-rose-100 text-rose-600" :
+                                    pred.probability === 'Moderate' ? "bg-amber-100 text-amber-600" :
+                                    "bg-blue-100 text-blue-600"
+                                  )}>
+                                    {pred.probability} Risk
+                                  </span>
+                                </div>
+                                <p className="text-sm text-slate-600 leading-relaxed">{pred.reasoning}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Health Suggestions */}
+                      {result.healthSuggestions && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100">
+                            <h4 className="font-bold text-emerald-800 flex items-center gap-2 mb-4">
+                              <Apple className="w-5 h-5" />
+                              Diet
+                            </h4>
+                            <ul className="space-y-2">
+                              {result.healthSuggestions.diet.map((item, idx) => (
+                                <li key={idx} className="text-sm text-emerald-700 flex items-start gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100">
+                            <h4 className="font-bold text-blue-800 flex items-center gap-2 mb-4">
+                              <Dumbbell className="w-5 h-5" />
+                              Exercise
+                            </h4>
+                            <ul className="space-y-2">
+                              {result.healthSuggestions.exercise.map((item, idx) => (
+                                <li key={idx} className="text-sm text-blue-700 flex items-start gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="bg-purple-50 p-6 rounded-3xl border border-purple-100">
+                            <h4 className="font-bold text-purple-800 flex items-center gap-2 mb-4">
+                              <Activity className="w-5 h-5" />
+                              Lifestyle
+                            </h4>
+                            <ul className="space-y-2">
+                              {result.healthSuggestions.lifestyle.map((item, idx) => (
+                                <li key={idx} className="text-sm text-purple-700 flex items-start gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Tests List */}
                       <div className="space-y-4">
@@ -839,7 +1046,7 @@ function AppContent() {
                                 </div>
                                 <div className="pt-4 border-t border-slate-100">
                                   <p className="text-sm text-slate-600 leading-relaxed italic">
-                                    "{test.explanation}"
+                                    "{eli5Mode ? test.eli5_explanation : test.explanation}"
                                   </p>
                                 </div>
                               </div>
@@ -867,7 +1074,7 @@ function AppContent() {
                           </ul>
                         </div>
                       )}
-                    </motion.div>
+                    </div>
                   ) : isAnalyzing ? (
                     <div key="loading" className="h-full min-h-[500px] flex flex-col items-center justify-center p-8">
                       <div className="w-full max-w-md space-y-10">
@@ -955,6 +1162,94 @@ function AppContent() {
                   )}
                 </AnimatePresence>
               </div>
+            </motion.div>
+          ) : view === 'trends' ? (
+            <motion.div 
+              key="trends-view"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-900">Health Trends</h2>
+                  <p className="text-slate-500 mt-1">Visualize your health data over time</p>
+                </div>
+              </div>
+
+              {history.length > 1 ? (
+                <div className="grid grid-cols-1 gap-8">
+                  {/* Collect all unique test names that have numeric values */}
+                  {Array.from(new Set(history.flatMap(h => h.tests.filter(t => t.numericValue !== undefined && t.numericValue !== null).map(t => t.name)))).map(testName => {
+                    const chartData = history
+                      .filter(h => h.tests.some(t => t.name === testName && t.numericValue !== undefined && t.numericValue !== null))
+                      .map(h => {
+                        const test = h.tests.find(t => t.name === testName);
+                        return {
+                          date: new Date(h.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }),
+                          value: test?.numericValue,
+                          unit: test?.unit || ""
+                        };
+                      })
+                      .reverse();
+
+                    if (chartData.length < 2) return null;
+
+                    return (
+                      <div key={testName} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                        <div className="flex items-center justify-between mb-8">
+                          <h3 className="text-xl font-bold text-slate-900">{testName}</h3>
+                          <span className="text-sm font-medium text-slate-400">{chartData[0].unit}</span>
+                        </div>
+                        <div className="h-[300px] w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                              <XAxis 
+                                dataKey="date" 
+                                axisLine={false} 
+                                tickLine={false} 
+                                tick={{ fill: '#94a3b8', fontSize: 12 }}
+                                dy={10}
+                              />
+                              <YAxis 
+                                axisLine={false} 
+                                tickLine={false} 
+                                tick={{ fill: '#94a3b8', fontSize: 12 }}
+                              />
+                              <Tooltip 
+                                contentStyle={{ 
+                                  backgroundColor: '#fff', 
+                                  borderRadius: '16px', 
+                                  border: 'none', 
+                                  boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' 
+                                }}
+                              />
+                              <Line 
+                                type="monotone" 
+                                dataKey="value" 
+                                stroke="#2563eb" 
+                                strokeWidth={3} 
+                                dot={{ r: 6, fill: '#2563eb', strokeWidth: 2, stroke: '#fff' }}
+                                activeDot={{ r: 8 }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-20 bg-white rounded-[3rem] border border-slate-200">
+                  <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center text-slate-200 mx-auto mb-6">
+                    <TrendingUp className="w-10 h-10" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-400">Not enough data</h3>
+                  <p className="text-slate-400 mt-2">Analyze at least two reports to see trend graphs. Make sure the reports have numeric values for the same tests.</p>
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div 

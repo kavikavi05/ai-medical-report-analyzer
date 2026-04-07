@@ -79,7 +79,13 @@ service cloud.firestore {
              data.fileName is string && data.fileName.size() > 0 &&
              data.summary is string && data.summary.size() > 0 &&
              data.tests is list &&
-             isValidDateString(data.createdAt);
+             isValidDateString(data.createdAt) &&
+             (!('predictions' in data) || data.predictions is list) &&
+             (!('healthSuggestions' in data) || data.healthSuggestions is map) &&
+             (!('isCritical' in data) || data.isCritical is bool) &&
+             (!('criticalAlertMessage' in data) || data.criticalAlertMessage is string) &&
+             (!('age' in data) || data.age is string) &&
+             (!('gender' in data) || data.gender is string);
     }
 
     function isAdmin() {
